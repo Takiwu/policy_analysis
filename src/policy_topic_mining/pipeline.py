@@ -6,6 +6,13 @@ from pathlib import Path
 
 import pandas as pd
 
+from .analysis import (
+    assign_time_stage,
+    calc_stage_topic_strength,
+    infer_level,
+    infer_year_from_text,
+    plot_stage_strength,
+)
 from .config import PipelineConfig, ensure_paths
 from .ingest import collect_documents, extract_year
 from .lda import (
@@ -53,7 +60,13 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             stats.empty_text_files,
         )
     for doc in docs:
-        doc["year"] = extract_year(Path(doc["path"]).stem)
+        path_stem = Path(doc["path"]).stem
+        year = extract_year(path_stem)
+        if year is None:
+            year = infer_year_from_text(path_stem, doc.get("text", ""))
+        doc["year"] = year
+        doc["level"] = infer_level(doc.get("path", ""))
+        doc["stage"] = assign_time_stage(year)
 
     doc_df = pd.DataFrame(docs)
     if not doc_df.empty:
@@ -77,6 +90,8 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             "doc_id": list(range(len(processed))),
             "path": [d["path"] for d in processed],
             "year": [d.get("year") for d in processed],
+            "level": [d.get("level") for d in processed],
+            "stage": [d.get("stage") for d in processed],
             "tokens": [" ".join(d["tokens"]) for d in processed],
             "is_empty_after_preprocess": [not bool(d["tokens"]) for d in processed],
         }
@@ -84,31 +99,49 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     processed_df.to_csv(cfg.output_dir / "tokens.csv", index=False, encoding="utf-8-sig")
 
     tokens_list = [d["tokens"] for d in usable]
+    wordcloud_fonts_used: dict[str, str] = {}
 
     if cfg.use_tfidf:
         tfidf_df = compute_tfidf(tokens_list, top_n=cfg.tfidf_top_n)
         tfidf_df.to_csv(cfg.output_dir / "tfidf_top_keywords.csv", index=False, encoding="utf-8-sig")
-        if cfg.wordcloud_font_path:
-            generate_wordcloud(tfidf_df, cfg.output_dir / "tfidf_wordcloud.png", cfg.wordcloud_font_path)
-        else:
+        if cfg.wordcloud_font_path and not tfidf_df.empty:
+            used_font = generate_wordcloud(tfidf_df, cfg.output_dir / "tfidf_wordcloud.png", cfg.wordcloud_font_path)
+            if used_font:
+                wordcloud_fonts_used["global"] = used_font
+        elif not cfg.wordcloud_font_path:
             LOGGER.warning("未提供中文字体路径，词云可能无法正确显示中文。")
+        else:
+            LOGGER.warning("TF-IDF 结果为空，已跳过词云生成。")
+
+        usable_df = pd.DataFrame(usable)
+        for level_name in ["central", "local"]:
+            sub = usable_df[usable_df.get("level") == level_name]
+            if sub.empty:
+                continue
+            level_tokens = [t for t in sub["tokens"].tolist() if t]
+            if not level_tokens:
+                continue
+            tfidf_level_df = compute_tfidf(level_tokens, top_n=cfg.tfidf_top_n)
+            tfidf_level_df.to_csv(
+                cfg.output_dir / f"tfidf_top_keywords_{level_name}.csv",
+                index=False,
+                encoding="utf-8-sig",
+            )
+            if cfg.wordcloud_font_path:
+                used_font = generate_wordcloud(
+                    tfidf_level_df,
+                    cfg.output_dir / f"tfidf_wordcloud_{level_name}.png",
+                    cfg.wordcloud_font_path,
+                )
+                if used_font:
+                    wordcloud_fonts_used[level_name] = used_font
 
     start, end = cfg.topic_range
-    if cfg.chosen_topics:
-        evaluations = []
-        models = {}
-        dictionary, corpus = build_corpus(tokens_list)
-        model = train_lda(
-            corpus=corpus,
-            dictionary=dictionary,
-            num_topics=cfg.chosen_topics,
-            alpha=cfg.resolved_alpha,
-            eta=cfg.lda_eta,
-            iterations=cfg.lda_iterations,
-            passes=cfg.lda_passes,
-            random_state=cfg.random_state,
-        )
-    else:
+    evaluations = []
+    models = {}
+    dictionary, corpus = build_corpus(tokens_list)
+
+    if cfg.evaluate_topic_range_first:
         evaluations, models, dictionary, corpus = evaluate_topic_range(
             tokens_list,
             start=start,
@@ -122,6 +155,21 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         eval_df = pd.DataFrame([e.__dict__ for e in evaluations])
         eval_df.to_csv(cfg.output_dir / "topic_evaluation.csv", index=False, encoding="utf-8-sig")
         plot_evaluations(eval_df, cfg.output_dir)
+
+    if cfg.chosen_topics:
+        model = train_lda(
+            corpus=corpus,
+            dictionary=dictionary,
+            num_topics=cfg.chosen_topics,
+            alpha=cfg.resolved_alpha,
+            eta=cfg.lda_eta,
+            iterations=cfg.lda_iterations,
+            passes=cfg.lda_passes,
+            random_state=cfg.random_state,
+        )
+    else:
+        if not evaluations:
+            raise ValueError("未提供固定主题数且跳过了主题评估，无法确定 K。")
         best_k = choose_best_k(evaluations)
         cfg.chosen_topics = best_k
         model = models[best_k]
@@ -136,6 +184,39 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     strength_df.to_csv(cfg.output_dir / "topic_strengths.csv", index=False, encoding="utf-8-sig")
     plot_topic_strengths(strength_df, cfg.output_dir)
 
+    meta_df = pd.DataFrame(
+        {
+            "doc_id": list(range(len(usable))),
+            "level": [d.get("level") for d in usable],
+            "stage": [d.get("stage") for d in usable],
+        }
+    )
+    stage_central = calc_stage_topic_strength(doc_topic_df, meta_df, level="central")
+    if not stage_central.empty:
+        stage_central.to_csv(
+            cfg.output_dir / "topic_strength_by_stage_central.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        plot_stage_strength(
+            stage_central,
+            cfg.output_dir / "topic_strength_by_stage_central.png",
+            title="Central Policy Topic Strength Trend",
+        )
+
+    stage_local = calc_stage_topic_strength(doc_topic_df, meta_df, level="local")
+    if not stage_local.empty:
+        stage_local.to_csv(
+            cfg.output_dir / "topic_strength_by_stage_local.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        plot_stage_strength(
+            stage_local,
+            cfg.output_dir / "topic_strength_by_stage_local.png",
+            title="Local Policy Topic Strength Trend",
+        )
+
     try:
         import pyLDAvis.gensim_models
 
@@ -147,11 +228,14 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     summary = {
         "documents": len(docs),
         "usable_documents": len(usable),
+        "level_counts": pd.Series([d.get("level") for d in docs]).value_counts(dropna=False).to_dict(),
+        "stage_counts": pd.Series([d.get("stage") for d in docs]).value_counts(dropna=False).to_dict(),
         "total_files": stats.total_files,
         "supported_files": stats.supported_files,
         "skipped_files": stats.skipped_files,
         "empty_text_files": stats.empty_text_files,
         "topics": cfg.chosen_topics,
+        "wordcloud_fonts_used": wordcloud_fonts_used,
         "output_dir": str(cfg.output_dir),
     }
     (cfg.output_dir / "summary.json").write_text(json.dumps(summary, ensure_ascii=False, indent=2), encoding="utf-8")

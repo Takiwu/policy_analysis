@@ -17,6 +17,7 @@ class PipelineConfig:
     tfidf_top_n: int = 40
     topic_range: tuple[int, int] = (5, 20)
     chosen_topics: int | None = None
+    evaluate_topic_range_first: bool = True
     lda_iterations: int = 100
     lda_passes: int = 10
     lda_alpha: str | float = "50/K"

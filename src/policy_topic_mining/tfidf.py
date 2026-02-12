@@ -12,6 +12,10 @@ def _identity(x):
 
 
 def compute_tfidf(tokens_list: list[list[str]], top_n: int = 40) -> pd.DataFrame:
+    if not tokens_list:
+        return pd.DataFrame(columns=["term", "tfidf_score"])
+    if not any(tokens_list):
+        return pd.DataFrame(columns=["term", "tfidf_score"])
     vectorizer = TfidfVectorizer(
         tokenizer=_identity,
         preprocessor=_identity,

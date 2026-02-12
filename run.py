@@ -15,7 +15,12 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--user-stopwords", default="stopwords/user_stopwords.txt", help="User stopwords file")
     parser.add_argument("--custom-dict", default="stopwords/custom_dict.txt", help="Custom jieba dict")
     parser.add_argument("--topic-range", default="5,20", help="Topic range, e.g. 5,20")
-    parser.add_argument("--topics", type=int, default=None, help="Fixed number of topics")
+    parser.add_argument("--topics", type=int, default=13, help="Fixed number of topics (default: 13)")
+    parser.add_argument(
+        "--skip-topic-eval",
+        action="store_true",
+        help="Skip perplexity/coherence topic-range evaluation",
+    )
     parser.add_argument("--disable-ocr", action="store_true", help="Disable OCR for images")
     parser.add_argument("--tesseract-cmd", default=None, help="Path to tesseract executable")
     parser.add_argument("--wordcloud-font", default=None, help="Font path for Chinese wordcloud")
@@ -34,6 +39,7 @@ def main() -> None:
         custom_dict_path=Path(args.custom_dict) if args.custom_dict else None,
         topic_range=parse_topic_range(args.topic_range),
         chosen_topics=args.topics,
+        evaluate_topic_range_first=not args.skip_topic_eval,
         enable_ocr=not args.disable_ocr,
         tesseract_cmd=args.tesseract_cmd,
         wordcloud_font_path=Path(args.wordcloud_font) if args.wordcloud_font else None,

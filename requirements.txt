@@ -1,0 +1,13 @@
+pdfplumber
+pypdf
+python-docx
+pillow
+pytesseract
+jieba
+gensim>=4.3.2; python_version < "3.13"
+scikit-learn
+pandas
+matplotlib
+tqdm
+wordcloud
+pyLDAvis>=3.4.1; python_version < "3.13"

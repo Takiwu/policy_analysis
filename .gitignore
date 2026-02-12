@@ -1,0 +1,22 @@
+# 忽略虚拟环境目录
+.venv/
+.env/
+
+# 忽略Python编译文件
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 忽略IDE配置文件
+.idea/
+.vscode/
+
+# 忽略日志文件
+*.log
+
+# 忽略本地配置文件
+local_settings.py
+
+# 忽略数据库文件
+*.sqlite3
+

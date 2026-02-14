@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import shutil
 import subprocess
 import tempfile
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from dataclasses import dataclass
 from typing import Iterable
@@ -16,6 +19,9 @@ import pytesseract
 
 
 LOGGER = logging.getLogger(__name__)
+
+_SPACE_RE = re.compile(r"\s+")
+_CN_WS_RE = re.compile(r"[\u3000\t\r\n]")
 
 SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".doc", ".png", ".jpg", ".jpeg", ".md", ".txt", ""}
 
@@ -118,9 +124,25 @@ def extract_text(path: Path, enable_ocr: bool = True, tesseract_cmd: str | None 
 
 
 def clean_raw_text(text: str) -> str:
-    text = re.sub(r"\s+", " ", text)
-    text = re.sub(r"[\u3000\t\r\n]", " ", text)
+    text = _SPACE_RE.sub(" ", text)
+    text = _CN_WS_RE.sub(" ", text)
     return text.strip()
+
+
+def _collect_one(path: Path, enable_ocr: bool, tesseract_cmd: str | None) -> tuple[str, str, int, str, float]:
+    started = time.perf_counter()
+    text = extract_text(path, enable_ocr=enable_ocr, tesseract_cmd=tesseract_cmd)
+    text = clean_raw_text(text)
+    elapsed = time.perf_counter() - started
+    return str(path), text, len(text), path.suffix.lower(), elapsed
+
+
+def _resolve_worker_count(max_workers: int | None) -> int:
+    if isinstance(max_workers, int) and max_workers > 0:
+        return max_workers
+    cpu = os.cpu_count() or 4
+    # I/O + 解析混合任务，给一个偏保守且通用的默认值
+    return min(8, max(2, cpu))
 
 
 def collect_documents(
@@ -128,6 +150,7 @@ def collect_documents(
     exts: Iterable[str] | None = None,
     enable_ocr: bool = True,
     tesseract_cmd: str | None = None,
+    max_workers: int | None = None,
 ) -> tuple[list[dict], CollectionStats]:
     exts = set(exts or SUPPORTED_EXTENSIONS)
     docs: list[dict] = []
@@ -136,12 +159,53 @@ def collect_documents(
     all_files = [p for p in sorted(input_dir.rglob("*")) if p.is_file()]
     supported_files = [p for p in all_files if p.suffix.lower() in exts]
 
-    for path in supported_files:
-        suffix = path.suffix.lower()
-        by_extension[suffix] = by_extension.get(suffix, 0) + 1
-        text = extract_text(path, enable_ocr=enable_ocr, tesseract_cmd=tesseract_cmd)
-        text = clean_raw_text(text)
-        docs.append({"path": str(path), "text": text, "text_len": len(text)})
+    total = len(supported_files)
+    if total == 0:
+        stats = CollectionStats(
+            total_files=len(all_files),
+            supported_files=0,
+            skipped_files=len(all_files),
+            empty_text_files=0,
+            by_extension=by_extension,
+        )
+        return docs, stats
+
+    workers = _resolve_worker_count(max_workers)
+    slow_threshold_sec = 5.0
+    progress_every = 50
+    LOGGER.info("Start collecting %d files with workers=%d", total, workers)
+
+    indexed_docs: dict[int, dict] = {}
+    done = 0
+
+    if workers == 1 or total < 20:
+        for idx, path in enumerate(supported_files):
+            p_str, text, text_len, suffix, elapsed = _collect_one(path, enable_ocr, tesseract_cmd)
+            by_extension[suffix] = by_extension.get(suffix, 0) + 1
+            indexed_docs[idx] = {"path": p_str, "text": text, "text_len": text_len}
+            done += 1
+            if elapsed >= slow_threshold_sec:
+                LOGGER.warning("Slow file %.2fs: %s", elapsed, p_str)
+            if done % progress_every == 0 or done == total:
+                LOGGER.info("Collecting progress: %d/%d (%.1f%%)", done, total, done * 100.0 / total)
+    else:
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            future_to_idx = {
+                executor.submit(_collect_one, path, enable_ocr, tesseract_cmd): idx
+                for idx, path in enumerate(supported_files)
+            }
+            for future in as_completed(future_to_idx):
+                idx = future_to_idx[future]
+                p_str, text, text_len, suffix, elapsed = future.result()
+                by_extension[suffix] = by_extension.get(suffix, 0) + 1
+                indexed_docs[idx] = {"path": p_str, "text": text, "text_len": text_len}
+                done += 1
+                if elapsed >= slow_threshold_sec:
+                    LOGGER.warning("Slow file %.2fs: %s", elapsed, p_str)
+                if done % progress_every == 0 or done == total:
+                    LOGGER.info("Collecting progress: %d/%d (%.1f%%)", done, total, done * 100.0 / total)
+
+    docs = [indexed_docs[i] for i in range(total)]
 
     empty_text_files = sum(1 for d in docs if not d["text"])
     stats = CollectionStats(

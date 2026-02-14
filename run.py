@@ -22,6 +22,7 @@ def build_parser() -> argparse.ArgumentParser:
         help="Skip perplexity/coherence topic-range evaluation",
     )
     parser.add_argument("--disable-ocr", action="store_true", help="Disable OCR for images")
+    parser.add_argument("--workers", type=int, default=None, help="Worker threads for document collection")
     parser.add_argument("--tesseract-cmd", default=None, help="Path to tesseract executable")
     parser.add_argument("--wordcloud-font", default=None, help="Font path for Chinese wordcloud")
     parser.add_argument(
@@ -46,6 +47,7 @@ def main() -> None:
         chosen_topics=args.topics,
         evaluate_topic_range_first=not args.skip_topic_eval,
         enable_ocr=not args.disable_ocr,
+        ingest_workers=args.workers,
         tesseract_cmd=args.tesseract_cmd,
         wordcloud_font_path=Path(args.wordcloud_font) if args.wordcloud_font else None,
         year_stages=args.year_stages,

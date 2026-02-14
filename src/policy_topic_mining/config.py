@@ -25,6 +25,7 @@ class PipelineConfig:
     topn_words: int = 15
     random_state: int = 42
     enable_ocr: bool = True
+    ingest_workers: int | None = None
     tesseract_cmd: str | None = None
     wordcloud_font_path: Path | None = None
     # 为空时自动按识别到的年份逐年分段
@@ -67,6 +68,9 @@ def validate_config(cfg: PipelineConfig) -> None:
 
     if cfg.min_token_len < 1:
         raise ValueError("min_token_len 必须大于等于 1")
+
+    if cfg.ingest_workers is not None and cfg.ingest_workers < 1:
+        raise ValueError("workers 必须为正整数")
 
 
 def parse_topic_range(text: str) -> tuple[int, int]:

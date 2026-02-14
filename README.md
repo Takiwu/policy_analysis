@@ -62,7 +62,10 @@ D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_po
 - `--topics 13`：固定主题数（默认值为 13，对应论文设置）
 - `--skip-topic-eval`：跳过困惑度/一致性评估（默认不跳过，建议保持默认）
 - `--year-stages`：按年份固定分期（例：`2016-2021,2022-2023,2024-`）；不传时自动按识别到的所有年份逐年分段。若使用开放区间（如 `2024-`），需放在最后。
+- `--workers 8`：文档采集并行线程数（默认自动）；在大量 PDF 场景可显著缩短“Collecting documents”阶段时长
 - `--wordcloud-font`：中文词云字体路径（例如 `.\fonts\HarmonyOS_Sans_Regular.ttf`）
+
+> 性能提示：采集阶段已支持并行读取，并会周期性输出进度（如 `Collecting progress: 200/889`）与慢文件告警。
 
 > 词云为空通常是以下原因：
 >
@@ -87,4 +90,4 @@ D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_po
 >
 > - 文件名 `AAA_YYYY-MM-DD` 会直接识别日期；
 > - 文件名 `AAA-BBB` 会尝试继承同名 `AAA_YYYY-MM-DD` 的日期；
-> - `法宝数据库` 目录文档优先从正文中 `papers` 后提取日期（支持 `YYYY.MM.DD / YYYY.MM / YYYY`）。
+> - `法宝数据库` 目录文档优先从正文中 `公布日期` 后提取日期（支持 `YYYY.MM.DD / YYYY.MM / YYYY`）。

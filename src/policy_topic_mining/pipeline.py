@@ -116,6 +116,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         cfg.input_dir,
         enable_ocr=cfg.enable_ocr,
         tesseract_cmd=cfg.tesseract_cmd,
+        max_workers=cfg.ingest_workers,
     )
     LOGGER.info(
         "Files scanned=%d, supported=%d, skipped=%d, empty_text=%d, by_ext=%s",

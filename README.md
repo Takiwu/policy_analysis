@@ -22,7 +22,7 @@
 2. 运行分析（示例）：
 
 ```bash
-D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_policy/output --output outputs --wordcloud-font D:/Codes/policy_analysis/fonts/HarmonyOS_Sans_Regular.ttf --disable-ocr --topics 13 --year-stages 2016-2021,2022-2023,2024-
+D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_policy/output --output outputs --wordcloud-font D:/Codes/policy_analysis/fonts/HarmonyOS_Sans_Regular.ttf --disable-ocr --topics 13
 ```
 
 ## 主要输出（`outputs/`）
@@ -41,6 +41,7 @@ D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_po
 - `topic_strength_by_stage_central.csv/.png`：中央主题强度时段演进
 - `topic_strength_by_stage_local.csv/.png`：地方主题强度时段演进
 - `topic_strength_by_stage_all.csv/.png`：总体（不分层级）主题强度时段演进
+- `duplicates_report.csv`：重复文档检测报告（按全文哈希）
 - `pyldavis.html`：交互式主题可视化
 - `summary.json`：运行摘要
 
@@ -60,7 +61,7 @@ D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_po
 - `--topic-range 5,20`：主题数搜索范围
 - `--topics 13`：固定主题数（默认值为 13，对应论文设置）
 - `--skip-topic-eval`：跳过困惑度/一致性评估（默认不跳过，建议保持默认）
-- `--year-stages`：按年份固定分期（默认：`2016-2021,2022-2023,2024-`；例：`2017-2021,2022-2023,2024-`）
+- `--year-stages`：按年份固定分期（例：`2016-2021,2022-2023,2024-`）；不传时自动按识别到的所有年份逐年分段
 - `--wordcloud-font`：中文词云字体路径（例如 `.\fonts\HarmonyOS_Sans_Regular.ttf`）
 
 > 词云为空通常是以下原因：
@@ -81,3 +82,9 @@ D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_po
 > TF-IDF实现说明：采用 `CountVectorizer + TfidfTransformer`，并将词权重输出为归一化占比（`tfidf_score`），数值量级通常为 `0.0x`。
 
 > 分层说明：中央/地方由文件路径与标题关键字自动推断，可在 `summary.json` 查看分层统计。
+
+> 日期识别说明：
+>
+> - 文件名 `AAA_YYYY-MM-DD` 会直接识别日期；
+> - 文件名 `AAA-BBB` 会尝试继承同名 `AAA_YYYY-MM-DD` 的日期；
+> - `法宝数据库` 目录文档优先从正文中 `papers` 后提取日期（支持 `YYYY.MM.DD / YYYY.MM / YYYY`）。

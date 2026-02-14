@@ -27,8 +27,8 @@ class PipelineConfig:
     enable_ocr: bool = True
     tesseract_cmd: str | None = None
     wordcloud_font_path: Path | None = None
-    # 默认按数据集三期：2016–2021、2022–2023、2024–至今
-    year_stages: str | None = "2016-2021,2022-2023,2024-"
+    # 为空时自动按识别到的年份逐年分段
+    year_stages: str | None = None
 
     @property
     def resolved_alpha(self) -> float:

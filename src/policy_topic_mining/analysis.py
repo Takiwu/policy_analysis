@@ -1,7 +1,6 @@
 from __future__ import annotations
 
-from __future__ import annotations
-
+from datetime import datetime
 from pathlib import Path
 import re
 from typing import Callable
@@ -32,8 +31,43 @@ LOCAL_HINTS = [
 ]
 
 
+MIN_VALID_YEAR = 1949
+MAX_VALID_YEAR = datetime.now().year + 1
+
+
+def _is_reasonable_year(year: int | None) -> bool:
+    return isinstance(year, int) and MIN_VALID_YEAR <= year <= MAX_VALID_YEAR
+
+
+def _normalize_date_parts(y: str, m: str | None, d: str | None) -> str | None:
+    year = int(y)
+    if not _is_reasonable_year(year):
+        return None
+
+    if m is None:
+        return f"{year:04d}"
+
+    month = int(m)
+    if not 1 <= month <= 12:
+        return None
+
+    if d is None:
+        return f"{year:04d}-{month:02d}"
+
+    day = int(d)
+    if not 1 <= day <= 31:
+        return None
+    return f"{year:04d}-{month:02d}-{day:02d}"
+
+
 def infer_level(path_text: str) -> str:
     text = path_text or ""
+    # 法宝数据库已在目录层级中区分“中央/地方”
+    if "法宝数据库" in text and "中央" in text:
+        return "central"
+    if "法宝数据库" in text and "地方" in text:
+        return "local"
+
     if any(k in text for k in CENTRAL_HINTS):
         return "central"
     if any(k in text for k in LOCAL_HINTS):
@@ -42,11 +76,59 @@ def infer_level(path_text: str) -> str:
 
 
 def infer_year_from_text(path_stem: str, text: str) -> int | None:
-    combined = f"{path_stem} {text[:2000]}"
-    match = re.search(r"(19|20)\d{2}", combined)
-    if not match:
+    # 1) 文件名中的“独立年份”（避免把 FBMCLI.6.5209936 里的 2099 当成年份）
+    stem_match = re.search(r"(?<!\d)((?:19|20)\d{2})(?!\d)", path_stem or "")
+    if stem_match:
+        year = int(stem_match.group(1))
+        if _is_reasonable_year(year):
+            return year
+
+    head = (text or "")[:5000]
+
+    # 2) 优先从“公布日期/施行日期/发文日期”等可信字段提取
+    labeled = re.search(
+        r"(?:公布日期|发布日期|发文日期|施行日期|实施日期|成文日期|印发日期)\s*[：:]\s*((?:19|20)\d{2})",
+        head,
+    )
+    if labeled:
+        year = int(labeled.group(1))
+        if _is_reasonable_year(year):
+            return year
+
+    # 3) 回退到“独立年份”匹配，并排除“下载日期”语境
+    for m in re.finditer(r"(?<!\d)((?:19|20)\d{2})(?!\d)", head):
+        year = int(m.group(1))
+        if not _is_reasonable_year(year):
+            continue
+        context = head[max(0, m.start() - 8) : m.end() + 8]
+        if "下载日期" in context:
+            continue
+        return year
+    return None
+
+
+def infer_date_from_fabao_content(path_text: str, text: str) -> str | None:
+    """从法宝数据库文档内容中提取“公布日期：”后的日期。
+
+    仅支持：YYYY.MM.DD / YYYY.MM / YYYY
+    """
+
+    if "法宝数据库" not in (path_text or ""):
         return None
-    return int(match.group(0))
+    if not text:
+        return None
+
+    m = re.search(
+        r"公布日期\s*[：:]\s*((?:19|20)\d{2})(?:\.(\d{1,2}))?(?:\.(\d{1,2}))?",
+        text,
+    )
+    if not m:
+        return None
+    normalized = _normalize_date_parts(m.group(1), m.group(2), m.group(3))
+    if normalized:
+        return normalized
+
+    return None
 
 
 def extract_date_from_stem(path_stem: str) -> str | None:
@@ -74,9 +156,11 @@ def base_title_from_dated_stem(path_stem: str) -> str | None:
     return path_stem.split(suffix, 1)[0]
 
 
-def infer_date_from_pairing(path_stem: str, base_to_date: dict[str, str]) -> str | None:
-    """Infer date for stems like 'AAA-BBB' by matching left part 'AAA' to dated mapping."""
+def infer_date_from_pairing(path_text: str, path_stem: str, base_to_date: dict[str, str]) -> str | None:
+    """仅针对“网信办”目录：为 AAA-BBB 继承 AAA_YYYY-MM-DD 的日期。"""
 
+    if "网信办" not in (path_text or ""):
+        return None
     if not path_stem or not base_to_date:
         return None
     # already dated
@@ -221,6 +305,22 @@ def build_time_stage_assigner(
     # 'other'/'unknown' must be ignored in all outputs.
     stage_order = labels
     return assign, stage_order
+
+
+def build_yearly_stage_assigner(years: list[int]) -> tuple[Callable[[int | None], str], list[str]]:
+    years_valid = sorted(set(int(y) for y in years if isinstance(y, int)))
+    labels = [str(y) for y in years_valid]
+    year_set = set(years_valid)
+
+    def assign(y: int | None) -> str:
+        if y is None:
+            return "unknown"
+        y_int = int(y)
+        if y_int in year_set:
+            return str(y_int)
+        return "other"
+
+    return assign, labels
 
 
 def calc_stage_topic_strength(

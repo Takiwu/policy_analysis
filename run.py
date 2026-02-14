@@ -26,8 +26,8 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--wordcloud-font", default=None, help="Font path for Chinese wordcloud")
     parser.add_argument(
         "--year-stages",
-        default="2016-2021,2022-2023,2024-",
-        help="Fixed year stages, e.g. 2016-2021,2022-2023,2024-",
+        default=None,
+        help="Fixed year stages, e.g. 2016-2021,2022-2023,2024-. If omitted, stages are split by each year found in data.",
     )
     return parser
 

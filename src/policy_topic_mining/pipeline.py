@@ -4,15 +4,17 @@ import json
 import logging
 from pathlib import Path
 from collections import Counter
+import hashlib
 
 import pandas as pd
 
 from .analysis import (
-    build_time_stage_assigner,
+    build_yearly_stage_assigner,
     build_fixed_stage_assigner,
     base_title_from_dated_stem,
     calc_stage_topic_strength,
     extract_date_from_stem,
+    infer_date_from_fabao_content,
     infer_level,
     infer_date_from_pairing,
     infer_year_from_text,
@@ -35,6 +37,55 @@ from .tfidf import compute_tfidf
 from .visualize import generate_wordcloud, plot_evaluations, plot_topic_strengths
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _check_duplicates(docs: list[dict], output_dir: Path) -> tuple[list[dict], int, int]:
+    """检测重复文档（按清洗后全文哈希），并输出报告。
+
+    返回：标注后的 docs、重复文档数量、重复组数量。
+    """
+
+    hash_to_first: dict[str, int] = {}
+    duplicate_count = 0
+    group_counter: Counter[str] = Counter()
+
+    for i, doc in enumerate(docs):
+        text = doc.get("text", "")
+        if not text:
+            doc["is_duplicate"] = False
+            doc["duplicate_of"] = None
+            doc["text_hash"] = None
+            continue
+        digest = hashlib.sha1(text.encode("utf-8", errors="ignore")).hexdigest()
+        doc["text_hash"] = digest
+        group_counter[digest] += 1
+        if digest in hash_to_first:
+            first_idx = hash_to_first[digest]
+            doc["is_duplicate"] = True
+            doc["duplicate_of"] = docs[first_idx]["path"]
+            duplicate_count += 1
+        else:
+            hash_to_first[digest] = i
+            doc["is_duplicate"] = False
+            doc["duplicate_of"] = None
+
+    dup_rows = []
+    for d in docs:
+        if d.get("text_hash") and group_counter[d["text_hash"]] > 1:
+            dup_rows.append(
+                {
+                    "path": d.get("path"),
+                    "is_duplicate": d.get("is_duplicate"),
+                    "duplicate_of": d.get("duplicate_of"),
+                    "text_hash": d.get("text_hash"),
+                    "text_len": d.get("text_len"),
+                    "group_size": group_counter[d["text_hash"]],
+                }
+            )
+
+    pd.DataFrame(dup_rows).to_csv(output_dir / "duplicates_report.csv", index=False, encoding="utf-8-sig")
+    duplicate_groups = sum(1 for _, c in group_counter.items() if c > 1)
+    return docs, duplicate_count, duplicate_groups
 
 
 def run_pipeline(cfg: PipelineConfig) -> None:
@@ -65,9 +116,11 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             "发现 %d 个文本为空的文件。若包含扫描件或图片，请启用 OCR 或指定 tesseract 路径。",
             stats.empty_text_files,
         )
-    # 1) build mapping: base title -> date from stems like AAA_YYYY-MM-DD
+    # 1) build mapping (仅网信办): base title -> date from stems like AAA_YYYY-MM-DD
     base_to_date: dict[str, str] = {}
     for doc in docs:
+        if "网信办" not in (doc.get("path", "") or ""):
+            continue
         stem = Path(doc["path"]).stem
         base = base_title_from_dated_stem(stem)
         date_str = extract_date_from_stem(stem)
@@ -79,7 +132,10 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     for doc in docs:
         path_stem = Path(doc["path"]).stem
 
-        date_str = infer_date_from_pairing(path_stem, base_to_date)
+        # 法宝数据库优先从内容中 papers 后日期提取
+        date_str = infer_date_from_fabao_content(doc.get("path", ""), doc.get("text", ""))
+        if not date_str:
+            date_str = infer_date_from_pairing(doc.get("path", ""), path_stem, base_to_date)
         if date_str:
             doc["date"] = date_str
             doc["year"] = int(date_str[:4])
@@ -95,12 +151,17 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
         doc["level"] = infer_level(doc.get("path", ""))
 
+    docs, duplicate_count, duplicate_groups = _check_duplicates(docs, cfg.output_dir)
+    if duplicate_count:
+        LOGGER.warning("检测到重复文档 %d 条（重复组 %d），详见 duplicates_report.csv", duplicate_count, duplicate_groups)
+
     if cfg.year_stages:
         fixed = parse_year_stages(cfg.year_stages)
         stage_assign, stage_order = build_fixed_stage_assigner(fixed)
         LOGGER.info("Using fixed year stages: %s", cfg.year_stages)
     else:
-        stage_assign, stage_order = build_time_stage_assigner(years_all, max_bins=4)
+        stage_assign, stage_order = build_yearly_stage_assigner(years_all)
+        LOGGER.info("Using yearly stages inferred from data: %s", ",".join(stage_order))
     for doc in docs:
         doc["stage"] = stage_assign(doc.get("year"))
 
@@ -302,6 +363,8 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         "supported_files": stats.supported_files,
         "skipped_files": stats.skipped_files,
         "empty_text_files": stats.empty_text_files,
+        "duplicate_documents": duplicate_count,
+        "duplicate_groups": duplicate_groups,
         "topics": cfg.chosen_topics,
         "wordcloud_fonts_used": wordcloud_fonts_used,
         "output_dir": str(cfg.output_dir),

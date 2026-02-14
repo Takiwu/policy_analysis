@@ -155,5 +155,5 @@ def collect_documents(
 
 
 def extract_year(text: str) -> int | None:
-    match = re.search(r"(19|20)\d{2}", text)
+    match = re.search(r"(?<!\d)((?:19|20)\d{2})(?!\d)", text)
     return int(match.group(0)) if match else None

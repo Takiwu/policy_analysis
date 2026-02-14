@@ -20,3 +20,4 @@ local_settings.py
 # 忽略数据库文件
 *.sqlite3
 
+papers/

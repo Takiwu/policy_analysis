@@ -24,6 +24,11 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--disable-ocr", action="store_true", help="Disable OCR for images")
     parser.add_argument("--tesseract-cmd", default=None, help="Path to tesseract executable")
     parser.add_argument("--wordcloud-font", default=None, help="Font path for Chinese wordcloud")
+    parser.add_argument(
+        "--year-stages",
+        default="2016-2021,2022-2023,2024-",
+        help="Fixed year stages, e.g. 2016-2021,2022-2023,2024-",
+    )
     return parser
 
 
@@ -43,6 +48,7 @@ def main() -> None:
         enable_ocr=not args.disable_ocr,
         tesseract_cmd=args.tesseract_cmd,
         wordcloud_font_path=Path(args.wordcloud_font) if args.wordcloud_font else None,
+        year_stages=args.year_stages,
     )
 
     run_pipeline(cfg)

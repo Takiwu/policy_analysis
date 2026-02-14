@@ -107,7 +107,13 @@ def evaluate_topic_range(
         )
         models[k] = model
         perplexity = model.log_perplexity(corpus)
-        coherence_model = CoherenceModel(model=model, texts=tokens_list, dictionary=dictionary, coherence="c_v")
+        coherence_model = CoherenceModel(
+            model=model,
+            texts=tokens_list,
+            dictionary=dictionary,
+            coherence="c_v",
+            processes=1,
+        )
         coherence = coherence_model.get_coherence()
         evaluations.append(LdaEvaluation(topic_count=k, perplexity=perplexity, coherence=coherence))
         LOGGER.info("k=%s perplexity=%.4f coherence=%.4f", k, perplexity, coherence)

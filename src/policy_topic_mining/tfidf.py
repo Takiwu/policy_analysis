@@ -4,7 +4,7 @@ from collections import Counter
 from typing import Iterable
 
 import pandas as pd
-from sklearn.feature_extraction.text import TfidfVectorizer
+from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 
 
 def _identity(x):
@@ -16,15 +16,35 @@ def compute_tfidf(tokens_list: list[list[str]], top_n: int = 40) -> pd.DataFrame
         return pd.DataFrame(columns=["term", "tfidf_score"])
     if not any(tokens_list):
         return pd.DataFrame(columns=["term", "tfidf_score"])
-    vectorizer = TfidfVectorizer(
+
+    # 模仿论文中提到的 TfidfTransformer 流程：
+    # 1) CountVectorizer 统计词频矩阵
+    # 2) TfidfTransformer 计算 TF-IDF
+    vectorizer = CountVectorizer(
         tokenizer=_identity,
         preprocessor=_identity,
         token_pattern=None,
     )
-    tfidf_matrix = vectorizer.fit_transform(tokens_list)
+    count_matrix = vectorizer.fit_transform(tokens_list)
+
+    transformer = TfidfTransformer(
+        norm="l2",
+        use_idf=True,
+        smooth_idf=True,
+        sublinear_tf=False,
+    )
+    tfidf_matrix = transformer.fit_transform(count_matrix)
+
     vocab = vectorizer.get_feature_names_out()
-    scores = tfidf_matrix.sum(axis=0).A1
-    pairs = sorted(zip(vocab, scores), key=lambda x: x[1], reverse=True)
+
+    # 使用“文档均值”并归一化为占比，得到与论文表格更接近的 0.0x 量级
+    mean_scores = tfidf_matrix.mean(axis=0).A1
+    total = float(mean_scores.sum())
+    if total <= 0:
+        return pd.DataFrame(columns=["term", "tfidf_score"])
+    norm_scores = mean_scores / total
+
+    pairs = sorted(zip(vocab, norm_scores), key=lambda x: x[1], reverse=True)
     top_pairs = pairs[:top_n]
     return pd.DataFrame(top_pairs, columns=["term", "tfidf_score"])
 

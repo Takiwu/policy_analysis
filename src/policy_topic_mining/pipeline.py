@@ -3,14 +3,20 @@ from __future__ import annotations
 import json
 import logging
 from pathlib import Path
+from collections import Counter
 
 import pandas as pd
 
 from .analysis import (
-    assign_time_stage,
+    build_time_stage_assigner,
+    build_fixed_stage_assigner,
+    base_title_from_dated_stem,
     calc_stage_topic_strength,
+    extract_date_from_stem,
     infer_level,
+    infer_date_from_pairing,
     infer_year_from_text,
+    parse_year_stages,
     plot_stage_strength,
 )
 from .config import PipelineConfig, ensure_paths
@@ -59,14 +65,44 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             "发现 %d 个文本为空的文件。若包含扫描件或图片，请启用 OCR 或指定 tesseract 路径。",
             stats.empty_text_files,
         )
+    # 1) build mapping: base title -> date from stems like AAA_YYYY-MM-DD
+    base_to_date: dict[str, str] = {}
+    for doc in docs:
+        stem = Path(doc["path"]).stem
+        base = base_title_from_dated_stem(stem)
+        date_str = extract_date_from_stem(stem)
+        if base and date_str:
+            base_to_date.setdefault(base, date_str)
+
+    # 2) assign date/year/level
+    years_all: list[int] = []
     for doc in docs:
         path_stem = Path(doc["path"]).stem
-        year = extract_year(path_stem)
-        if year is None:
-            year = infer_year_from_text(path_stem, doc.get("text", ""))
-        doc["year"] = year
+
+        date_str = infer_date_from_pairing(path_stem, base_to_date)
+        if date_str:
+            doc["date"] = date_str
+            doc["year"] = int(date_str[:4])
+        else:
+            doc["date"] = None
+            year = extract_year(path_stem)
+            if year is None:
+                year = infer_year_from_text(path_stem, doc.get("text", ""))
+            doc["year"] = year
+
+        if isinstance(doc.get("year"), int):
+            years_all.append(int(doc["year"]))
+
         doc["level"] = infer_level(doc.get("path", ""))
-        doc["stage"] = assign_time_stage(year)
+
+    if cfg.year_stages:
+        fixed = parse_year_stages(cfg.year_stages)
+        stage_assign, stage_order = build_fixed_stage_assigner(fixed)
+        LOGGER.info("Using fixed year stages: %s", cfg.year_stages)
+    else:
+        stage_assign, stage_order = build_time_stage_assigner(years_all, max_bins=4)
+    for doc in docs:
+        doc["stage"] = stage_assign(doc.get("year"))
 
     doc_df = pd.DataFrame(docs)
     if not doc_df.empty:
@@ -89,6 +125,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         {
             "doc_id": list(range(len(processed))),
             "path": [d["path"] for d in processed],
+            "date": [d.get("date") for d in processed],
             "year": [d.get("year") for d in processed],
             "level": [d.get("level") for d in processed],
             "stage": [d.get("stage") for d in processed],
@@ -97,6 +134,17 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         }
     )
     processed_df.to_csv(cfg.output_dir / "tokens.csv", index=False, encoding="utf-8-sig")
+
+    # 停用词效果诊断：输出过滤后高频词，便于核验停用词是否生效
+    token_counter: Counter[str] = Counter()
+    for d in processed:
+        token_counter.update(d["tokens"])
+    top_filtered_terms = token_counter.most_common(100)
+    pd.DataFrame(top_filtered_terms, columns=["term", "count"]).to_csv(
+        cfg.output_dir / "post_stopwords_top_terms.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
 
     tokens_list = [d["tokens"] for d in usable]
     wordcloud_fonts_used: dict[str, str] = {}
@@ -191,7 +239,20 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             "stage": [d.get("stage") for d in usable],
         }
     )
-    stage_central = calc_stage_topic_strength(doc_topic_df, meta_df, level="central")
+    stage_all = calc_stage_topic_strength(doc_topic_df, meta_df, level="all", stage_order=stage_order)
+    if not stage_all.empty:
+        stage_all.to_csv(
+            cfg.output_dir / "topic_strength_by_stage_all.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        plot_stage_strength(
+            stage_all,
+            cfg.output_dir / "topic_strength_by_stage_all.png",
+            title="All Policies Topic Strength Trend",
+        )
+
+    stage_central = calc_stage_topic_strength(doc_topic_df, meta_df, level="central", stage_order=stage_order)
     if not stage_central.empty:
         stage_central.to_csv(
             cfg.output_dir / "topic_strength_by_stage_central.csv",
@@ -204,7 +265,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             title="Central Policy Topic Strength Trend",
         )
 
-    stage_local = calc_stage_topic_strength(doc_topic_df, meta_df, level="local")
+    stage_local = calc_stage_topic_strength(doc_topic_df, meta_df, level="local", stage_order=stage_order)
     if not stage_local.empty:
         stage_local.to_csv(
             cfg.output_dir / "topic_strength_by_stage_local.csv",
@@ -225,11 +286,18 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     except ImportError:
         LOGGER.warning("pyLDAvis 未安装或不可用，已跳过可视化输出。")
 
+    # stage_counts should ignore 'other'/'unknown' in all cases
+    stage_counts = pd.Series([d.get("stage") for d in docs]).value_counts(dropna=False).to_dict()
+    if stage_order:
+        stage_counts = {k: int(stage_counts.get(k, 0)) for k in stage_order}
+    else:
+        stage_counts = {}
+
     summary = {
         "documents": len(docs),
         "usable_documents": len(usable),
         "level_counts": pd.Series([d.get("level") for d in docs]).value_counts(dropna=False).to_dict(),
-        "stage_counts": pd.Series([d.get("stage") for d in docs]).value_counts(dropna=False).to_dict(),
+        "stage_counts": stage_counts,
         "total_files": stats.total_files,
         "supported_files": stats.supported_files,
         "skipped_files": stats.skipped_files,

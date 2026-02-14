@@ -55,13 +55,27 @@ def ensure_paths(cfg: PipelineConfig) -> None:
         cfg.wordcloud_font_path = Path(cfg.wordcloud_font_path)
 
 
+def validate_config(cfg: PipelineConfig) -> None:
+    if not cfg.input_dir.exists() or not cfg.input_dir.is_dir():
+        raise ValueError(f"输入目录不存在或不是目录: {cfg.input_dir}")
+
+    if cfg.topic_range[0] < 2 or cfg.topic_range[1] < cfg.topic_range[0]:
+        raise ValueError("topic_range 配置非法，应满足 start >= 2 且 end >= start")
+
+    if cfg.chosen_topics is not None and cfg.chosen_topics < 2:
+        raise ValueError("topics 必须大于等于 2")
+
+    if cfg.min_token_len < 1:
+        raise ValueError("min_token_len 必须大于等于 1")
+
+
 def parse_topic_range(text: str) -> tuple[int, int]:
     parts = [p.strip() for p in text.split(",") if p.strip()]
     if len(parts) != 2:
         raise ValueError("topic_range must be two integers separated by a comma, e.g. 5,20")
     start, end = int(parts[0]), int(parts[1])
-    if start < 2 or end <= start:
-        raise ValueError("topic_range must be like 5,20 and end > start >= 2")
+    if start < 2 or end < start:
+        raise ValueError("topic_range must be like 5,20 and end >= start >= 2")
     return start, end
 
 

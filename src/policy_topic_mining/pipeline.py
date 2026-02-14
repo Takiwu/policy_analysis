@@ -21,7 +21,7 @@ from .analysis import (
     parse_year_stages,
     plot_stage_strength,
 )
-from .config import PipelineConfig, ensure_paths
+from .config import PipelineConfig, ensure_paths, validate_config
 from .ingest import collect_documents, extract_year
 from .lda import (
     choose_best_k,
@@ -37,6 +37,19 @@ from .tfidf import compute_tfidf
 from .visualize import generate_wordcloud, plot_evaluations, plot_topic_strengths
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _save_and_plot_stage_strength(
+    stage_df: pd.DataFrame,
+    output_dir: Path,
+    csv_name: str,
+    png_name: str,
+    title: str,
+) -> None:
+    if stage_df.empty:
+        return
+    stage_df.to_csv(output_dir / csv_name, index=False, encoding="utf-8-sig")
+    plot_stage_strength(stage_df, output_dir / png_name, title=title)
 
 
 def _check_duplicates(docs: list[dict], output_dir: Path) -> tuple[list[dict], int, int]:
@@ -90,6 +103,7 @@ def _check_duplicates(docs: list[dict], output_dir: Path) -> tuple[list[dict], i
 
 def run_pipeline(cfg: PipelineConfig) -> None:
     ensure_paths(cfg)
+    validate_config(cfg)
     cfg.output_dir.mkdir(parents=True, exist_ok=True)
 
     logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(levelname)s - %(message)s")
@@ -301,43 +315,31 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         }
     )
     stage_all = calc_stage_topic_strength(doc_topic_df, meta_df, level="all", stage_order=stage_order)
-    if not stage_all.empty:
-        stage_all.to_csv(
-            cfg.output_dir / "topic_strength_by_stage_all.csv",
-            index=False,
-            encoding="utf-8-sig",
-        )
-        plot_stage_strength(
-            stage_all,
-            cfg.output_dir / "topic_strength_by_stage_all.png",
-            title="All Policies Topic Strength Trend",
-        )
+    _save_and_plot_stage_strength(
+        stage_all,
+        cfg.output_dir,
+        "topic_strength_by_stage_all.csv",
+        "topic_strength_by_stage_all.png",
+        "All Policies Topic Strength Trend",
+    )
 
     stage_central = calc_stage_topic_strength(doc_topic_df, meta_df, level="central", stage_order=stage_order)
-    if not stage_central.empty:
-        stage_central.to_csv(
-            cfg.output_dir / "topic_strength_by_stage_central.csv",
-            index=False,
-            encoding="utf-8-sig",
-        )
-        plot_stage_strength(
-            stage_central,
-            cfg.output_dir / "topic_strength_by_stage_central.png",
-            title="Central Policy Topic Strength Trend",
-        )
+    _save_and_plot_stage_strength(
+        stage_central,
+        cfg.output_dir,
+        "topic_strength_by_stage_central.csv",
+        "topic_strength_by_stage_central.png",
+        "Central Policy Topic Strength Trend",
+    )
 
     stage_local = calc_stage_topic_strength(doc_topic_df, meta_df, level="local", stage_order=stage_order)
-    if not stage_local.empty:
-        stage_local.to_csv(
-            cfg.output_dir / "topic_strength_by_stage_local.csv",
-            index=False,
-            encoding="utf-8-sig",
-        )
-        plot_stage_strength(
-            stage_local,
-            cfg.output_dir / "topic_strength_by_stage_local.png",
-            title="Local Policy Topic Strength Trend",
-        )
+    _save_and_plot_stage_strength(
+        stage_local,
+        cfg.output_dir,
+        "topic_strength_by_stage_local.csv",
+        "topic_strength_by_stage_local.png",
+        "Local Policy Topic Strength Trend",
+    )
 
     try:
         import pyLDAvis.gensim_models

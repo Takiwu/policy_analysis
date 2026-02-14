@@ -58,10 +58,10 @@ D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_po
 
 ## 参数提示
 
-- `--topic-range 5,20`：主题数搜索范围
+- `--topic-range 5,20`：主题数搜索范围（支持同值，如 `13,13`）
 - `--topics 13`：固定主题数（默认值为 13，对应论文设置）
 - `--skip-topic-eval`：跳过困惑度/一致性评估（默认不跳过，建议保持默认）
-- `--year-stages`：按年份固定分期（例：`2016-2021,2022-2023,2024-`）；不传时自动按识别到的所有年份逐年分段
+- `--year-stages`：按年份固定分期（例：`2016-2021,2022-2023,2024-`）；不传时自动按识别到的所有年份逐年分段。若使用开放区间（如 `2024-`），需放在最后。
 - `--wordcloud-font`：中文词云字体路径（例如 `.\fonts\HarmonyOS_Sans_Regular.ttf`）
 
 > 词云为空通常是以下原因：

@@ -205,10 +205,18 @@ def parse_year_stages(spec: str) -> list[tuple[int, int | None]]:
     # sanity: non-decreasing, non-overlapping
     stages_sorted = sorted(stages, key=lambda x: x[0])
     prev_end: int | None = None
+    seen_open_ended = False
     for s, e in stages_sorted:
+        if seen_open_ended:
+            raise ValueError("year_stages 中开放区间必须放在最后")
         if prev_end is not None and s <= prev_end:
             raise ValueError("year_stages contains overlapping or unsorted ranges")
-        prev_end = e
+        if e is not None and e < s:
+            raise ValueError("year_stages contains invalid range where end < start")
+        if e is None:
+            seen_open_ended = True
+        else:
+            prev_end = e
     return stages_sorted
 
 

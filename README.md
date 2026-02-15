@@ -22,7 +22,7 @@
 2. 运行分析（示例）：
 
 ```bash
-D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_policy/output --output outputs --wordcloud-font D:/Codes/policy_analysis/fonts/HarmonyOS_Sans_Regular.ttf --disable-ocr --topics 13 --workers 8
+D:/Codes/policy_analysis/.venv/Scripts/python.exe run.py --input D:/Codes/get_policy/output --output outputs --wordcloud-font D:/Codes/policy_analysis/fonts/HarmonyOS_Sans_Regular.ttf --disable-ocr --topics 12 --workers 16
 ```
 
 ## 主要输出（`outputs/`）

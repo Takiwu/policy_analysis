@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import json
 import logging
+import csv
+import gc
 from pathlib import Path
 from collections import Counter
 import hashlib
@@ -37,6 +39,40 @@ from .tfidf import compute_tfidf
 from .visualize import generate_wordcloud, plot_evaluations, plot_topic_strengths
 
 LOGGER = logging.getLogger(__name__)
+
+
+def _write_documents_csv(docs: list[dict], output_path: Path) -> None:
+    columns = [
+        "path",
+        "text",
+        "text_len",
+        "date",
+        "year",
+        "level",
+        "stage",
+        "is_duplicate",
+        "duplicate_of",
+        "text_hash",
+        "is_empty",
+    ]
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    with output_path.open("w", encoding="utf-8-sig", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columns)
+        writer.writeheader()
+        for d in docs:
+            writer.writerow({
+                "path": d.get("path"),
+                "text": d.get("text"),
+                "text_len": d.get("text_len"),
+                "date": d.get("date"),
+                "year": d.get("year"),
+                "level": d.get("level"),
+                "stage": d.get("stage"),
+                "is_duplicate": d.get("is_duplicate"),
+                "duplicate_of": d.get("duplicate_of"),
+                "text_hash": d.get("text_hash"),
+                "is_empty": not bool(d.get("text")),
+            })
 
 
 def _save_and_plot_stage_strength(
@@ -180,16 +216,19 @@ def run_pipeline(cfg: PipelineConfig) -> None:
     for doc in docs:
         doc["stage"] = stage_assign(doc.get("year"))
 
-    doc_df = pd.DataFrame(docs)
-    if not doc_df.empty:
-        doc_df["is_empty"] = doc_df["text"].eq("")
-    doc_df.to_csv(cfg.output_dir / "documents.csv", index=False, encoding="utf-8-sig")
+    _write_documents_csv(docs, cfg.output_dir / "documents.csv")
 
     non_empty_docs = [d for d in docs if d["text"]]
     if not non_empty_docs:
         raise ValueError("没有可用文本用于建模。请检查 OCR 或输入文件格式。")
 
     processed = preprocess_docs(non_empty_docs, stopwords=stopwords, min_token_len=cfg.min_token_len)
+    # 原始文本在后续流程中不再使用，尽早释放引用，降低内存峰值
+    for d in docs:
+        d["text"] = ""
+    del non_empty_docs
+    gc.collect()
+
     usable = [d for d in processed if d["tokens"]]
     dropped = len(processed) - len(usable)
     if dropped:
@@ -221,6 +260,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
         index=False,
         encoding="utf-8-sig",
     )
+    del token_counter, top_filtered_terms
 
     tokens_list = [d["tokens"] for d in usable]
     wordcloud_fonts_used: dict[str, str] = {}
@@ -262,11 +302,10 @@ def run_pipeline(cfg: PipelineConfig) -> None:
 
     start, end = cfg.topic_range
     evaluations = []
-    models = {}
     dictionary, corpus = build_corpus(tokens_list)
 
     if cfg.evaluate_topic_range_first:
-        evaluations, models, dictionary, corpus = evaluate_topic_range(
+        evaluations, _, dictionary, corpus = evaluate_topic_range(
             tokens_list,
             start=start,
             end=end,
@@ -275,6 +314,7 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             iterations=cfg.lda_iterations,
             passes=cfg.lda_passes,
             random_state=cfg.random_state,
+            keep_models=False,
         )
         eval_df = pd.DataFrame([e.__dict__ for e in evaluations])
         eval_df.to_csv(cfg.output_dir / "topic_evaluation.csv", index=False, encoding="utf-8-sig")
@@ -296,7 +336,16 @@ def run_pipeline(cfg: PipelineConfig) -> None:
             raise ValueError("未提供固定主题数且跳过了主题评估，无法确定 K。")
         best_k = choose_best_k(evaluations)
         cfg.chosen_topics = best_k
-        model = models[best_k]
+        model = train_lda(
+            corpus=corpus,
+            dictionary=dictionary,
+            num_topics=best_k,
+            alpha=cfg.resolved_alpha,
+            eta=cfg.lda_eta,
+            iterations=cfg.lda_iterations,
+            passes=cfg.lda_passes,
+            random_state=cfg.random_state,
+        )
 
     topic_words_df = extract_topic_words(model, topn=cfg.topn_words)
     topic_words_df.to_csv(cfg.output_dir / "lda_topic_words.csv", index=False, encoding="utf-8-sig")

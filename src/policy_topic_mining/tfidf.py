@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections import Counter
 from typing import Iterable
 
+import numpy as np
 import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer, TfidfTransformer
 
@@ -44,8 +45,10 @@ def compute_tfidf(tokens_list: list[list[str]], top_n: int = 40) -> pd.DataFrame
         return pd.DataFrame(columns=["term", "tfidf_score"])
     norm_scores = mean_scores / total
 
-    pairs = sorted(zip(vocab, norm_scores), key=lambda x: x[1], reverse=True)
-    top_pairs = pairs[:top_n]
+    n = min(max(int(top_n), 1), len(vocab))
+    top_idx = np.argpartition(norm_scores, -n)[-n:]
+    top_idx = top_idx[np.argsort(norm_scores[top_idx])[::-1]]
+    top_pairs = [(vocab[i], float(norm_scores[i])) for i in top_idx]
     return pd.DataFrame(top_pairs, columns=["term", "tfidf_score"])
 
 

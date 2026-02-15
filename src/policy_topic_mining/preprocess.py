@@ -8,6 +8,8 @@ import jieba
 
 LOGGER = logging.getLogger(__name__)
 
+_CJK_RE = re.compile(r"[\u4e00-\u9fff]")
+
 
 def load_stopwords(*paths: Path) -> set[str]:
     stopwords: set[str] = set()
@@ -45,7 +47,7 @@ def filter_tokens(tokens: list[str], stopwords: set[str], min_len: int = 2) -> l
             continue
         if token.isnumeric():
             continue
-        if not re.search(r"[\u4e00-\u9fff]", token):
+        if not _CJK_RE.search(token):
             continue
         filtered.append(token)
     return filtered
@@ -61,6 +63,15 @@ def preprocess_docs(
         text = normalize_text(doc["text"])
         tokens = tokenize(text)
         tokens = filter_tokens(tokens, stopwords, min_len=min_token_len)
-        processed.append({**doc, "tokens": tokens})
+        processed.append(
+            {
+                "path": doc.get("path"),
+                "date": doc.get("date"),
+                "year": doc.get("year"),
+                "level": doc.get("level"),
+                "stage": doc.get("stage"),
+                "tokens": tokens,
+            }
+        )
     LOGGER.info("Preprocessed %d documents", len(processed))
     return processed

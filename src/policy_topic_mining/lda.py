@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import importlib
+import gc
 from dataclasses import dataclass
 from typing import Any, Iterable
 
@@ -11,11 +12,17 @@ import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
 
+_GENSIM_MODULE_CACHE: dict[str, Any] = {}
+
 
 def _import_gensim_submodule(submodule: str) -> Any:
+    if submodule in _GENSIM_MODULE_CACHE:
+        return _GENSIM_MODULE_CACHE[submodule]
     try:
         module_name = f"gensim.{submodule}"
-        return importlib.import_module(module_name)
+        module = importlib.import_module(module_name)
+        _GENSIM_MODULE_CACHE[submodule] = module
+        return module
     except ImportError as exc:
         raise ImportError(
             "gensim 未安装或与当前 Python 版本不兼容。请使用 Python 3.11/3.12 "
@@ -58,6 +65,7 @@ def train_lda(
         eta=eta,
         iterations=iterations,
         passes=passes,
+        eval_every=0,
     )
 
 
@@ -78,6 +86,7 @@ def evaluate_topic_range(
     iterations: int,
     passes: int,
     random_state: int,
+    keep_models: bool = True,
 ) -> tuple[list[LdaEvaluation], dict[int, object], object, list[list[tuple[int, int]]]]:
     gensim_models = _import_gensim_submodule("models")
     CoherenceModel = gensim_models.CoherenceModel
@@ -95,7 +104,8 @@ def evaluate_topic_range(
             passes=passes,
             random_state=random_state,
         )
-        trained_models[k] = model
+        if keep_models:
+            trained_models[k] = model
         perplexity = model.log_perplexity(corpus)
         coherence_model = CoherenceModel(
             model=model,
@@ -107,6 +117,10 @@ def evaluate_topic_range(
         coherence = coherence_model.get_coherence()
         evaluations.append(LdaEvaluation(topic_count=k, perplexity=perplexity, coherence=coherence))
         LOGGER.info("k=%s perplexity=%.4f coherence=%.4f", k, perplexity, coherence)
+        if not keep_models:
+            del model
+            del coherence_model
+            gc.collect()
     return evaluations, trained_models, dictionary, corpus
 
 
